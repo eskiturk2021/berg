@@ -5,16 +5,19 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 import sqlite3
 from datetime import datetime
 from dotenv import load_dotenv
+import time
+import json
 
 # Загрузка переменных окружения
 load_dotenv()
 
-# Получение API ключей
+# Получение API ключей и ID ассистента
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+ASSISTANT_ID = os.getenv("ASSISTANT_ID")
 
 # Проверка наличия ключей
-if not OPENAI_API_KEY or not TELEGRAM_TOKEN:
+if not OPENAI_API_KEY or not TELEGRAM_TOKEN or not ASSISTANT_ID:
     raise ValueError("Отсутствуют необходимые переменные окружения. Проверьте файл .env")
 
 # Инициализация клиента OpenAI
@@ -45,19 +48,32 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     save_message(user_id, user_message)
 
-    # Создание запроса к GPT-4
     try:
-        response = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system",
-                 "content": "Вы ассистент по здоровому питанию и образу жизни. Используйте информацию из предоставленной базы знаний о кето-диете, интервальном голодании и здоровом образе жизни."},
-                {"role": "user", "content": user_message}
-            ],
-            max_tokens=500  # Ограничение длины ответа
+        # Создание нового потока для каждого сообщения
+        thread = client.beta.threads.create()
+
+        # Добавление сообщения пользователя в поток
+        client.beta.threads.messages.create(
+            thread_id=thread.id,
+            role="user",
+            content=user_message
         )
 
-        assistant_message = response.choices[0].message.content
+        # Запуск ассистента
+        run = client.beta.threads.runs.create(
+            thread_id=thread.id,
+            assistant_id=ASSISTANT_ID
+        )
+
+        # Ожидание завершения выполнения
+        while run.status != "completed":
+            run = client.beta.threads.runs.retrieve(thread_id=thread.id, run_id=run.id)
+            time.sleep(1)
+
+        # Получение ответа ассистента
+        messages = client.beta.threads.messages.list(thread_id=thread.id)
+        assistant_message = messages.data[0].content[0].text.value
+
     except Exception as e:
         print(f"Ошибка при запросе к OpenAI: {e}")
         assistant_message = "Извините, произошла ошибка при обработке вашего запроса. Попробуйте позже."

@@ -4,11 +4,12 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 import sqlite3
 from datetime import datetime
-from dotenv import load_dotenv
 import time
 import json
 
 # Загрузка переменных окружения
+from dotenv import load_dotenv
+
 load_dotenv()
 
 # Получение API ключей и ID ассистента
@@ -31,11 +32,29 @@ c.execute('''CREATE TABLE IF NOT EXISTS conversations
 conn.commit()
 
 
-def save_message(user_id, message, is_user=True):
+def save_message_to_db(user_id, message, is_user=True):
     timestamp = datetime.now().isoformat()
     role = "user" if is_user else "assistant"
     c.execute("INSERT INTO conversations VALUES (?, ?, ?)", (user_id, f"{role}: {message}", timestamp))
     conn.commit()
+
+
+def save_conversation_to_file(user_id, message, is_user=True):
+    timestamp = datetime.now().isoformat()
+    role = "User" if is_user else "Assistant"
+    filename = f"conversation_{user_id}.txt"
+
+    # Чтение существующего содержимого файла
+    existing_content = ""
+    if os.path.exists(filename):
+        with open(filename, "r", encoding="utf-8") as file:
+            existing_content = file.read()
+
+    # Добавление нового сообщения
+    with open(filename, "w", encoding="utf-8") as file:
+        if existing_content:
+            file.write(existing_content + "\n")
+        file.write(f"{timestamp} - {role}: {message}\n")
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -46,7 +65,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_message = update.message.text
 
-    save_message(user_id, user_message)
+    save_message_to_db(user_id, user_message)
+    save_conversation_to_file(user_id, user_message)
 
     try:
         # Создание нового потока для каждого сообщения
@@ -80,16 +100,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(assistant_message)
 
-    save_message(user_id, assistant_message, is_user=False)
+    save_message_to_db(user_id, assistant_message, is_user=False)
+    save_conversation_to_file(user_id, assistant_message, is_user=False)
 
 
 async def get_conversation_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    c.execute("SELECT message FROM conversations WHERE user_id = ? ORDER BY timestamp ASC", (user_id,))
-    history = c.fetchall()
+    filename = f"conversation_{user_id}.txt"
 
-    if history:
-        conversation = "\n".join([msg[0] for msg in history])
+    if os.path.exists(filename):
+        with open(filename, "r", encoding="utf-8") as file:
+            conversation = file.read()
         await update.message.reply_text(f"Ваша история переписки:\n\n{conversation}")
     else:
         await update.message.reply_text("У вас пока нет истории переписки.")
